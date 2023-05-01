@@ -1,4 +1,5 @@
 # BF591_Shiny_Project
+**Please note that the counts matrix and `DESeq2` files are required for this app's use and can be found at the link below**
 ## Final project for BF591—creation of an R Shiny application for various bioinformatics analyses.
 ## BF591 is a rigorous course that teaches students bioinformatic analyses with the R programming language. We develop functions for a wide variety of bionformatic analyses in R. This final project serves as an amalgamation of everything we have learned into an elegant and concise R Shiny app.
 
