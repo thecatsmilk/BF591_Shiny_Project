@@ -11,6 +11,8 @@ library(data.table)
 library(glue)
 library(pheatmap)
 library(bslib)
+library(ggbeeswarm)
+library(DT)
 
 # this is to allow the upload of the counts csv file as it is too large for default parameters
 options(shiny.maxRequestSize = 100*1024^2)
@@ -25,7 +27,7 @@ meta_columns <- c('Age of Death',
                   'Age of Onset',
                   'Vonsattel Grade')
 
-de_columns <- c('symbol',
+de_columns <- c(#'symbol',
                 'baseMean',
                 'HD.mean',
                 'Control.mean',
@@ -59,8 +61,9 @@ ui <- fluidPage(
                  fileInput('file', label = 'Please upload your data', accept = '.csv', placeholder = 'GSE64810_HD_DESeq2.csv'),
                  tabPanel('Summary', hr(), tableOutput('summary_table')),
                  tabPanel('Data Table', p('Note: You can search by column at the bottom of the page.'),
-                          p("In the Diagnosis column, you can filter by 'Neurologically Normal' or 'Huntington's Disease"),
-                          hr(), dataTableOutput('filtered_data_table'), width = 6),
+                          p("In the search box you can filter for what ever you'd like.", br(),
+                            "You could restrict data only to those in the Diagnosis column who are Neurologically normal, or who have Huntington's Disease."),
+                          hr(), DTOutput('filtered_data_table'), width = 6),
                  tabPanel('Plots',
                           tabsetPanel(
                             
@@ -116,18 +119,21 @@ ui <- fluidPage(
                  fileInput('file1', label = 'Please upload your counts data', accept = '.csv', placeholder = 'GSE64810_HD_counts_mat.csv'), 
                  
                  sliderInput('slider_1', 
-                             "Including genes with at least X percent of variance.",  
+                             "Slider to include genes with at least X percent of variance.",  
                              min = 0, 
                              max = 100, 
-                             value = 50, 
+                             value = 10, 
                              step = 1),
                  
                  sliderInput('slider_2', 
-                             "Including genes with at least X percent that are non-zero", 
+                             "Slider to filter by number of samples that are non-zero.", 
                              min = 0,
                              max = 100,
                              value = 50, 
-                             step = 1),
+                             step = 1,
+                             ticks = FALSE),
+                 tags$head(tags$style(HTML('.irs-from, .irs-to, .irs-min, .irs-max, .irs-single {
+                                           visibility: hidden !important;}'))),
                  
                  submitButton(text = 'Submit', icon = icon('heart')),
                  
@@ -150,7 +156,7 @@ ui <- fluidPage(
                           colourInput(
                             inputId = 'c2',
                             label = 'Not passing threshold', 
-                            value = '#ffffff', 
+                            value = '#960000', 
                             closeOnClick = T),
                           
                           hr(), br(),
@@ -162,11 +168,12 @@ ui <- fluidPage(
                  ## clustered heatmap--------------------------
                  tabPanel('Clustered Heatmap', 
                           hr('Heatmap based on percent variance.
-                             The legend is the log2(counts).'), 
+                             The legend is the log2(counts).', br(), 
+                             '(The higher the percent variance, the longer the heatmap will take to render!)'), 
                           plotOutput('heatmap_vis')), 
                  
                  ## PCA plot-------------------------------
-                 tabPanel('PCA Plot', br(),
+                 tabPanel('PCA Plots (biplot & projection plot)', br(),
                           numericInput(inputId = 'PCx',
                                        label = 'Select which PC to plot on the x-axis',
                                        value = 1,
@@ -177,8 +184,10 @@ ui <- fluidPage(
                                        value = 2, 
                                        min = 1,
                                        max = 69),
-                          hr('PCA plot'), 
-                          plotOutput('pca_plot')))), 
+                          hr('PCA biplot'), 
+                          plotOutput('pca_plot'),
+                          hr('PCA projection'),
+                          plotOutput('bee')))), 
       
       
       
@@ -232,7 +241,7 @@ ui <- fluidPage(
                    tabsetPanel(
                      tabPanel(
                        'DE Filtered Table',
-                       dataTableOutput('diff_ex_table'), 
+                       DTOutput('diff_ex_table'), 
                        br()
                      ), 
                      tabPanel(
@@ -295,7 +304,7 @@ ui <- fluidPage(
                    plotOutput('fgsea_scatter')),
                  tabPanel(
                    'FGSEA Results table',
-                   dataTableOutput('fgsea_table'),
+                   DTOutput('fgsea_table'),
                    downloadButton("download_csv", "Download as CSV")
                  )))))))
   )
@@ -426,8 +435,7 @@ server <- function(input, output, session) {
       dplyr::arrange(desc(variance))
     
     # making sure the slider value is between 1 and 100
-    slider_value <- slider / 100 
-    
+    slider_value <- slider / 100
     # making sure they are whole numbers
     counts_matrix <- counts_matrix %>% 
       dplyr::slice(1:ceiling(nrow(.) * slider_value))
@@ -484,13 +492,13 @@ server <- function(input, output, session) {
     # new column `frequency` with count of non-zero elements in each row
     counts_matrix$frequency <- rowSums(counts_matrix != 0)
     # counts_matrix <- dplyr::mutate(frequency = rowSums(counts_matrix != 0))
-    
+    # slider_2 <- (slider_2 / 100) * max(counts_matrix$frequency)
     # selecting rows from the `counts_matrix` where the value of the `frequency` column
     # is greater than the `slider_2` threshold
     # we then create a new data frame called `zeros`
     # this new df contains only the values of the first column of the selected rows from before
     zeros <- counts_matrix %>%
-      dplyr::filter(frequency > slider_2) %>%
+      dplyr::filter(frequency < slider_2) %>%
       dplyr::select(1)
     
     # number of samples
@@ -509,7 +517,7 @@ server <- function(input, output, session) {
     sample_info <- c('Number of samples', 
                      'Total number of genes',
                      'Number of genes passing threshold',
-                     'Number of gene not passing threshold',
+                     'Number of genes not passing threshold',
                      'Percent of genes passing threshold',
                      'Percent of genes not passing threshold')
     
@@ -540,21 +548,21 @@ server <- function(input, output, session) {
       dplyr::arrange(desc(variance))
     
     # making sure the slider value is between 1 and 100
-    slider_value <- slider / 100 
+    slider_value <- ((slider / 100) * max(log10(counts_matrix$variance)))
     
     # new column for median
     counts_matrix$median <- apply(counts_matrix, 1, median)
     
     # assigning groups for plotting
-    group <- ifelse(counts_matrix$variance < 10^slider_value, FALSE, TRUE)
+    group <- ifelse(counts_matrix$variance < 10^slider_value, TRUE, FALSE)
     
-    plot <- ggplot(data = counts_matrix, aes(x = median, y = log10(variance), group = group, color = group))+
+    plot <- ggplot(data = counts_matrix, aes(x = log10(median), y = log10(variance), group = group, color = group))+
       geom_point() +
       scale_color_manual(name = glue('Variance < {slider}%'), values=c(color2, color1)) + 
       theme(legend.position = 'bottom') +
-      xlab(label = 'Median Count') +
+      xlab(label = 'Median Count (log10 scale)') +
       ylab(label = 'log10(Variance)') +
-      ggtitle(label = 'Median Count vs log10(Variance)')
+      ggtitle(label = 'Median Count (log10 scale) vs log10(Variance)')
     
     return(plot)
   } 
@@ -569,17 +577,16 @@ server <- function(input, output, session) {
     counts_matrix$median <- apply(counts_matrix, 1, median)
     
     # percentage
-    slider_value <- slider / 100
-    
+    slider_value <- ((slider / 100) * max(counts_matrix$frequency))
     # assigning groups for plotting
-    group <- ifelse(counts_matrix$frequency < 10^slider_value, FALSE, TRUE)
+    group <- ifelse(counts_matrix$frequency < slider_value, TRUE, FALSE)
     
-    plot <- ggplot(data = counts_matrix, aes(x = median, y = log10(frequency), group = group, color = group))+
+    plot <- ggplot(data = counts_matrix, aes(x = log10(median), y = frequency, group = group, color = group))+
       geom_point() + 
-      scale_color_manual(name=glue('Frequency of Non-Zeros < {slider}%'), values=c(color1, color2)) + 
+      scale_color_manual(name=glue('Frequency of Non-Zeros < {slider}%'), values=c(color2, color1)) + 
       theme(legend.position = "bottom") +
-      xlab(label = 'Median Count') +
-      ylab(label = 'log10(Frequency)') +
+      xlab(label = 'Median Count (log10 scale)') +
+      ylab(label = 'Frequency') +
       ggtitle(label = 'Median Count vs. log10(Frequency) of Non-Zeros')
     
     return(plot)
@@ -598,6 +605,8 @@ server <- function(input, output, session) {
     
     counts_matrix <- counts_matrix %>% dplyr::mutate_all(function(x) log2(x+1))
     
+    
+    
     slider_value_1 <- ((slider_1 / 100) * max(counts_matrix$variance))
     
     # Filter rows where variance is less than or equal to slider_value_1
@@ -608,19 +617,19 @@ server <- function(input, output, session) {
     counts_matrix <- counts_matrix[, -1]
     
     
-    hm_mat <- counts_matrix %>%
-      as.matrix()
     
     
-    colors <- colorRampPalette(rev(brewer.pal(n = 9, name = 'PuRd')))(100)
-    colors <- rev(colors)
+    
+    colors <- colorRampPalette(rev(brewer.pal(n = 11, name = 'PiYG')))(50)
+    # colors <- rev(colors)
     
     hm <- pheatmap(counts_matrix,
+                   scale = 'row',
                    color = colors,
                    cluster_rows = TRUE,
                    cluster_cols = FALSE,
-                   clustering_distance_rows = 'euclidean',
-                   clustering_distance_cols = 'euclidean',
+                   # clustering_distance_rows = 'manhattan',
+                   # clustering_distance_cols = 'correlation',
                    treeheight_row = 0,
                    show_rownames = FALSE)
 
@@ -658,6 +667,7 @@ server <- function(input, output, session) {
     p <- ggplot(plot_df, aes(x = PCx, y = PCy, color = Neuro)) +
       geom_point() +
       scale_color_manual(values = c("#fa0000", "#240032")) +
+      stat_ellipse(aes(x = PCx, y = PCy, color = Neuro)) +
       scale_x_continuous(name = paste0("PC", X, " (", round(100*pca_results$sdev[X]^2/sum(pca_results$sdev^2), 1), "%)")) +
       scale_y_continuous(name = paste0("PC", Y, " (", round(100*pca_results$sdev[Y]^2/sum(pca_results$sdev^2), 1), "%)")) +
       labs(title = paste0("PC", X, " vs. PC", Y, "; Grouped by Neurological Function"), color = 'Neurological Function') +
@@ -665,6 +675,31 @@ server <- function(input, output, session) {
       geom_hline(yintercept = 0, linetype = 3)
     
     return(p)
+  }
+  
+  ## PCA bee------------------------
+  pca_bee <- function (counts_matrix) {
+    
+    # remove gene column
+    counts_matrix <- counts_matrix %>% 
+      dplyr::select(-1) %>% 
+      dplyr::mutate_all(function(x) log2(x + 1))
+    
+    
+    # Performing PCA
+    pca_results <- prcomp(scale(t(counts_matrix)), center = TRUE, scale. = TRUE)
+    
+    plot <- pca_results$x %>% as_tibble() %>% 
+      pivot_longer(everything(), names_to = 'PC', values_to = 'Projection') %>% 
+      # slice(1:1000) %>% 
+      mutate(PC = fct_relevel(PC, str_c('PC', 1:69))) %>% 
+      ggplot(aes(x = PC, y = Projection)) +
+      geom_beeswarm() +
+      labs(title = 'PCA Projection Plot') +
+      theme(axis.text.x = element_text(angle = 90, hjust = 0, vjust = 0.5))
+    
+    return (plot)
+    
   }
   
   
@@ -811,11 +846,11 @@ server <- function(input, output, session) {
   
   
   ### filtered table output---------------------------
-  output$filtered_data_table <- renderDataTable({
+  output$filtered_data_table <- renderDT({
     # req(input$file)
     f_table <- load_file()
     return(filtered_data_table(f_table))
-  }, options = list(pageLength = 10, scrollY = "400px", scrollX = "400px", dom = 'tip'))
+  }, options = list(scrollX = TRUE, scrollY = TRUE, autoWidth = TRUE))
   
   
   
@@ -915,6 +950,14 @@ server <- function(input, output, session) {
     return (PCA)
   })
   
+  output$bee <- renderPlot ({
+    
+    c_mat <- load_counts_mat()
+    bee <- pca_bee(c_mat)
+    
+    return (bee)
+  })
+  
   ## Differential Expression---------------
   
   ### volcano plot-------------------------
@@ -930,7 +973,7 @@ server <- function(input, output, session) {
   })
   
   # DE table here
-  output$diff_ex_table <- renderDataTable({
+  output$diff_ex_table <- renderDT({
     
     DE_table <- load_diff_ex()
     
@@ -938,7 +981,7 @@ server <- function(input, output, session) {
     
     return (res)
 
-  }, options = list(pageLength = 1000, scrollY = "400px", scrollX = "400px", dom = 'tip'))
+  }, options = list(scrollX = TRUE, scrollY = TRUE, autoWidth = TRUE))
   
   
   # volcano here
@@ -962,7 +1005,7 @@ server <- function(input, output, session) {
   })
   
   ### GSEA table-------------------------
-  output$fgsea_table <- renderDataTable({
+  output$fgsea_table <- renderDT({
     
     table <- run_gsea(DS2_data(), gmt, input$fgsea_slider, input$pos_or_neg) %>% 
       dplyr::select(-leadingEdge) %>% 
@@ -987,7 +1030,7 @@ server <- function(input, output, session) {
     
     return (table)
     
-  }, options = list(pageLength = 10, scrollY = "450px", scrollX = "1000px", dom = 'tip'))
+  }, options = list(scrollX = TRUE, scrollY = TRUE, autoWidth = TRUE))
   
   ### GSEA bar-----------------
   output$fgsea_bar <- renderPlot({
