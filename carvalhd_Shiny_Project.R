@@ -58,7 +58,7 @@ ui <- fluidPage(
       
       tabPanel('Samples',
                tabsetPanel(
-                 fileInput('file', label = 'Please upload your data', accept = '.csv', placeholder = 'GSE64810_HD_DESeq2.csv'),
+                 fileInput('file', label = 'Please upload your data', accept = '.csv', placeholder = 'HD_metadata.csv'),
                  tabPanel('Summary', hr(), tableOutput('summary_table')),
                  tabPanel('Data Table', p('Note: You can search by column at the bottom of the page.'),
                           p("In the search box you can filter for what ever you'd like.", br(),
@@ -200,7 +200,7 @@ ui <- fluidPage(
                    fileInput(
                      inputId = 'diff_ex', 
                      label = 'Please load a differential expression file',
-                     accept = '.csv',
+                     accept = 'GSE64810_HD_DESeq2.csv',
                      placeholder = 'DE_results'
                    ),
                    radioButtons(
@@ -365,7 +365,10 @@ server <- function(input, output, session) {
                     avg_rin, avg_mRNA_seq_reads, 
                     avg_AoO, avg_v)
     
-    summarized <- tibble::tibble(column_names, classes, avg_vector)
+    summarized <- tibble::tibble(column_names, classes, avg_vector) %>% 
+      dplyr::rename('Column Name' = 'column_names',
+                    'Class' = 'classes',
+                    'Average Value' = 'avg_vector')
     return(summarized)
   }
   
@@ -587,7 +590,7 @@ server <- function(input, output, session) {
       theme(legend.position = "bottom") +
       xlab(label = 'Median Count (log10 scale)') +
       ylab(label = 'Frequency') +
-      ggtitle(label = 'Median Count vs. log10(Frequency) of Non-Zeros')
+      ggtitle(label = 'log10(Median Count) vs. Frequency of Non-Zeros')
     
     return(plot)
   }
